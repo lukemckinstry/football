@@ -1,0 +1,3 @@
+lt_dp_posx,lt_dp_posy,lt_dp_velx,lt_dp_vely,ball_posx,ball_posy,ball_posz,ball_vel_x,ball_vel_y,ball_rot_x,ball_rot_y,ball_rot_z,rt_gk_posx,rt_gk_posy,rt_gk_velx,rt_gk_vely,action_left,action_top_left,action_top,action_top_right,action_right,action_bottom_right,action_bottom,action_bottom_left,action_sprint,action_dribble,sel_action
+-1.0110293626785278,-0.0,0.0,-0.0,0.019999999552965164,-0.0,0.11061639338731766,-0.0,0.0,0.0,-0.0,0.0,1.0110293626785278,0.0,-0.0,0.0,0,0,0,0,0,0,0,0,0,0,5
+0.0015069420915096998,9.174210696683005e-11,0.003586255246773362,2.5862921179675702e-11,0.019999999552965164,-0.0,0.11059734225273132,-0.0,0.0,0.0,-0.0,0.0,1.0110293626785278,0.0,-0.0,0.0,0,0,0,0,1,0,0,0,0,0,5
