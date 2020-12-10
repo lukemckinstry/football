@@ -31,11 +31,23 @@ from gfootball.env import observation_rotation
 import gym
 import numpy as np
 
+import datetime, os, copy
+import pickle
+from sklearn.linear_model import LogisticRegression
+import tensorflow.compat.v1 as tf
+
+import tensorflow.compat.v1.keras
+
+from tensorflow.compat.v1.keras import Sequential
+from tensorflow.compat.v1.keras.layers import Dense
+
+
 
 class FootballEnv(gym.Env):
   """Allows multiple players to play in the same environment."""
 
   def __init__(self, config):
+
     self._config = config
     player_config = {'index': 0}
     # There can be at most one agent at a time. We need to remember its
@@ -48,6 +60,9 @@ class FootballEnv(gym.Env):
     self._env = football_env_core.FootballEnvCore(self._config)
     self._num_actions = len(football_action_set.get_action_set(self._config))
     self._cached_observation = None
+    self._supervised_log_filename = "episode" + str(datetime.datetime.now())
+    self._trained_supervised_lr_models = self._load_trained_supervised_lr_models()
+    self._trained_neural_network_model = self._load_trained_neural_network_model()
 
   @property
   def action_space(self):
@@ -55,6 +70,22 @@ class FootballEnv(gym.Env):
       return gym.spaces.MultiDiscrete(
           [self._num_actions] * self._config.number_of_players_agent_controls())
     return gym.spaces.Discrete(self._num_actions)
+
+  def _load_trained_supervised_lr_models(self):
+    models = []
+    for idx in range(19):
+      loaded_model = pickle.load(open('trained_models/logistic_regression_models/model' + str(idx) + '.sav', 'rb'))
+      models.append(loaded_model)
+    return models 
+
+  def _load_trained_neural_network_model(self):
+    model = Sequential()
+    model.add(Dense(12, input_dim=26, activation='relu'))
+    model.add(Dense(8, activation='relu'))
+    model.add(Dense(19, activation='sigmoid'))
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    model.load_weights('trained_models/nn_weights_only/model_weights.h5')
+    return model
 
   def _construct_players(self, definitions, config):
     result = []
@@ -137,8 +168,83 @@ class FootballEnv(gym.Env):
       return [a]
     return a
 
+  def _log_train_data(self,training_obs):
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    logfile = open("supervised_logs/"+self._supervised_log_filename,"a")
+    training_obs_string = ','.join([str(i) for i in training_obs])
+    logfile.write(training_obs_string)
+    logfile.write('\n')
+    logfile.close()
+
+  def _format_obs(self,obs,action):
+    
+    obs_copy = copy.deepcopy(obs)
+    obs_copy.pop('frame')
+    
+    ## left team attacking 
+    lt_des_player = obs_copy['left_team_designated_player']
+    lt_dp_velx, lt_dp_vely = obs_copy['left_team_direction'][lt_des_player][0], obs_copy['left_team_direction'][lt_des_player][1]
+    lt_dp_posx, lt_dp_posy = obs_copy['left_team'][lt_des_player][0], obs_copy['left_team'][lt_des_player][1]
+
+    lt_dp_sticky_actions = [i for i in obs_copy['left_agent_sticky_actions'][0]]
+
+    #goal_pos = [1,0]
+    #dist_to_goal = [ player_w_ball_pos[i] - goal_pos[i] for i in range(2)]
+
+    ## ball 
+    ball_posx, ball_posy, ball_posz = obs_copy['ball'][0], obs_copy['ball'][1], obs_copy['ball'][2]
+    ball_vel_x, ball_vel_y = obs_copy['ball_direction'][0], obs_copy['ball_direction'][1]
+    ball_rot_x, ball_rot_y, ball_rot_z = obs_copy['ball_rotation'][0], obs_copy['ball_rotation'][1], obs_copy['ball_rotation'][2]
+
+    ## right team goalkeeper
+    rt_gk_idx = np.where(obs_copy['right_team_roles'] == 0)
+    assert(len(rt_gk_idx) == 1)
+    gk_idx = rt_gk_idx[0][0]
+    rt_gk_velx, rt_gk_vely = obs_copy['right_team_direction'][gk_idx][0], obs_copy['right_team_direction'][gk_idx][1]
+    rt_gk_posx, rt_gk_posy = obs_copy['right_team'][gk_idx][0], obs_copy['right_team'][gk_idx][1]
+
+    action_space = [
+      'idle','left','top_left','top','top_right','right',
+      'bottom_right','bottom','bottom_left',
+      'long_pass','high_pass','short_pass','shot','sprint',
+      'release_direction','release_sprint','sliding','dribble','release_dribble'
+    ]
+    sel_action = action_space.index(str(action[0]))
+
+    pos_obs = [
+      lt_dp_posx, lt_dp_posy,
+      lt_dp_velx, lt_dp_vely,
+      ball_posx, ball_posy, ball_posz,
+      ball_vel_x, ball_vel_y,
+      ball_rot_x, ball_rot_y, ball_rot_z,
+      rt_gk_posx, rt_gk_posy,
+      rt_gk_velx,rt_gk_vely,
+    ]
+    #formatted_obs_arr = pos_obs + lt_dp_sticky_actions + [sel_action]
+    formatted_obs_arr = pos_obs + [sel_action]
+    return formatted_obs_arr
+
+  def _infer_from_supervised_lr_models(self, x):
+    actions_enum = football_action_set.get_action_set(self._config)
+    x = x[:-1]
+    cs = [c.predict_proba([x])[0][1] for c in self._trained_supervised_lr_models]
+    mc = cs.index(max(cs)) 
+    #print('infer action --> ',actions_enum[mc] )
+    return [actions_enum[mc]]
+
+  def _infer_from_neural_network_model(self, x):
+    actions_enum = football_action_set.get_action_set(self._config)
+    x = x[:-1]
+    model = self._trained_neural_network_model
+    cs = model.predict_classes(np.array([x,]))
+    #print('infer action --> ',actions_enum[cs[0]] )
+    return [actions_enum[cs[0]]]
+
+
   def _get_actions(self):
     obs = self._env.observation()
+
+    #print(obs)
     left_actions = []
     right_actions = []
     left_player_position = 0
@@ -159,8 +265,23 @@ class FootballEnv(gym.Env):
           a[index] = observation_rotation.flip_single_action(
               a[index], self._config)
       left_actions.extend(a[:player.num_controlled_left_players()])
+      ## LukeM: format observation 
+      formatted_obs_arr = self._format_obs(obs,left_actions)
+      ## LukeM: infer action from logistic regression models
+      luke_ai_actions = self._infer_from_supervised_lr_models(formatted_obs_arr)
+
+      ## LukeM: infer action from neural network
+      #luke_ai_actions = self._infer_from_neural_network_model(formatted_obs_arr)
+
+
+
+      self._log_train_data(formatted_obs_arr)
       right_actions.extend(a[player.num_controlled_left_players():])
-    actions = left_actions + right_actions
+    ## use game ai ##
+    #print('left_actions ', left_actions)
+    #actions = left_actions + right_actions
+    ## use inference from models ##
+    actions = luke_ai_actions + right_actions
     return actions
 
   def step(self, action):
@@ -183,6 +304,17 @@ class FootballEnv(gym.Env):
     return (self.observation(), np.array(reward, dtype=np.float32), done, info)
 
   def reset(self):
+    self._supervised_log_filename = "episode" + str(datetime.datetime.now())
+
+    logfile = open("supervised_logs/"+self._supervised_log_filename,"a")
+    sticky_labels = ['action_left','action_top_left','action_top','action_top_right','action_right','action_bottom_right','action_bottom','action_bottom_left','action_sprint','action_dribble']
+    cols = ['lt_dp_posx','lt_dp_posy','lt_dp_velx','lt_dp_vely','ball_posx','ball_posy','ball_posz','ball_vel_x','ball_vel_y','ball_rot_x','ball_rot_y','ball_rot_z','rt_gk_posx','rt_gk_posy','rt_gk_velx','rt_gk_vely']
+    header = ','.join(cols+sticky_labels+['sel_action'])
+    logfile.write(header)
+    logfile.write('\n')
+    logfile.close()
+
+
     self._env.reset()
     for player in self._players:
       player.reset()
