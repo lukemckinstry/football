@@ -1,3 +1,25 @@
+# Notes for this fork
+
+All documention applies, however the following command should be used to run the docker container to enable edits via mounting the game engine files to a local drive.
+
+```
+docker run -e DISPLAY=$DISPLAY --device /dev/dri/card0 --device /dev/dri/renderD128 -it -v /tmp/.X11-unix:/tmp/.X11-unix:rw -v $PWD:/gfootball:rw gfootball bash
+```
+
+### Collect training data for supervised learning
+
+```
+python3 -m gfootball.play_game --players "ppo2_cnn:left_players=1,policy=gfootball_impala_cnn,checkpoint=$CHECKPOINT" --level=$LEVEL
+```
+
+### Swap in trained supervised model for game AI
+```
+python3 -m gfootball.play_game --players "ppo2_cnn:left_players=1,policy=gfootball_impala_cnn,checkpoint=$CHECKPOINT" --level=$LEVEL
+
+```
+
+
+
 # Google Research Football
 
 This repository contains an RL environment based on open-source game Gameplay
