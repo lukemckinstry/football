@@ -30,16 +30,17 @@ from gfootball.env import football_env_core
 from gfootball.env import observation_rotation
 import gym
 import numpy as np
+import itertools
 
 import datetime, os, copy
 import pickle
-from sklearn.linear_model import LogisticRegression
+#from sklearn.linear_model import LogisticRegression
 import tensorflow.compat.v1 as tf
 
 import tensorflow.compat.v1.keras
 
 from tensorflow.compat.v1.keras import Sequential
-from tensorflow.compat.v1.keras.layers import Dense
+from tensorflow.compat.v1.keras.layers import Dense, InputLayer, Conv1D, BatchNormalization, ReLU, GlobalAveragePooling1D
 
 
 
@@ -61,8 +62,9 @@ class FootballEnv(gym.Env):
     self._num_actions = len(football_action_set.get_action_set(self._config))
     self._cached_observation = None
     self._supervised_log_filename = "episode" + str(datetime.datetime.now())
-    self._trained_supervised_lr_models = self._load_trained_supervised_lr_models()
-    self._trained_neural_network_model = self._load_trained_neural_network_model()
+    #self._trained_supervised_lr_models = self._load_trained_supervised_lr_models()
+    #self._trained_neural_network_model = self._load_trained_neural_network_model()
+    self._trained_cnn_timeseries_model = self._load_trained_cnn_timeseries_model()
 
   @property
   def action_space(self):
@@ -85,6 +87,24 @@ class FootballEnv(gym.Env):
     model.add(Dense(19, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
     model.load_weights('trained_models/nn_weights_only/model_weights.h5')
+    return model
+
+  def _load_trained_cnn_timeseries_model(self):
+    model = Sequential([
+      InputLayer((75,1)),
+      Conv1D(filters=64, kernel_size=3, padding="same"),
+      BatchNormalization(),
+      ReLU(),
+      Conv1D(filters=64, kernel_size=3, padding="same"),
+      BatchNormalization(),
+      ReLU(),
+      Conv1D(filters=64, kernel_size=3, padding="same"),
+      BatchNormalization(),  
+      ReLU(),
+      GlobalAveragePooling1D(),
+      Dense(19, activation="softmax")
+      ])
+    model.load_weights('trained_models/cnn_timeseries_weights_only/cnn_model_weights.h5')    
     return model
 
   def _construct_players(self, definitions, config):
@@ -176,6 +196,49 @@ class FootballEnv(gym.Env):
     logfile.write('\n')
     logfile.close()
 
+  def _format_rnn_obs(self,obs,action):
+    obs_copy = copy.deepcopy(obs)
+    obs_copy.pop('frame')
+
+    ## ball 
+    ball_arr = [obs_copy['ball'],obs_copy['ball_direction'],obs_copy['ball_rotation']]
+    ball = list(itertools.chain(*ball_arr))
+
+    #designated player
+    lt_des_player = obs_copy['left_team_designated_player']    
+    lt_dp_posx, lt_dp_posy = obs_copy['left_team'][lt_des_player]
+    lt_dp_velx, lt_dp_vely = obs_copy['left_team_direction'][lt_des_player]
+
+    ## left team attacking 
+    lt_pos = list(itertools.chain(*obs_copy['left_team'])) 
+    lt_vel = list(itertools.chain(*obs_copy['left_team_direction']))
+    lt_active = [int(i) for i in obs_copy['left_team_active']]
+    lt_zip = list(zip(lt_pos,lt_vel,lt_active))
+    lt_comp = list(itertools.chain(*lt_zip))
+
+    #right team
+    rt_pos = list(itertools.chain(*obs_copy['right_team']))
+    rt_vel = list(itertools.chain(*obs_copy['right_team_direction']))
+    rt_active = [int(i) for i in obs_copy['right_team_active']]
+    rt_zip = list(zip(rt_pos,rt_vel,rt_active))
+    rt_comp = list(itertools.chain(*rt_zip))
+
+    pos_obs = [
+      ball, lt_comp, rt_comp
+    ]
+
+    flat_obs = list(itertools.chain(*pos_obs))
+    action_space = [
+      'idle','left','top_left','top','top_right','right',
+      'bottom_right','bottom','bottom_left',
+      'long_pass','high_pass','short_pass','shot','sprint',
+      'release_direction','release_sprint','sliding','dribble','release_dribble'
+    ]
+    sel_action = action_space.index(str(action[0]))
+    formatted_obs_arr = flat_obs + [sel_action]
+    return formatted_obs_arr
+
+
   def _format_obs(self,obs,action):
     
     obs_copy = copy.deepcopy(obs)
@@ -233,11 +296,13 @@ class FootballEnv(gym.Env):
     return [actions_enum[mc]]
 
   def _infer_from_neural_network_model(self, x):
+    x = np.array(x)
+    x = np.expand_dims(x, axis=1)
     actions_enum = football_action_set.get_action_set(self._config)
     x = x[:-1]
-    model = self._trained_neural_network_model
+    #model = self._trained_neural_network_model
+    model = self._trained_cnn_timeseries_model
     cs = model.predict_classes(np.array([x,]))
-    #print('infer action --> ',actions_enum[cs[0]] )
     return [actions_enum[cs[0]]]
 
 
@@ -266,13 +331,14 @@ class FootballEnv(gym.Env):
               a[index], self._config)
       left_actions.extend(a[:player.num_controlled_left_players()])
       ## LukeM: format observation 
-      formatted_obs_arr = self._format_obs(obs,left_actions)
+      #print('obs ', obs)
+      formatted_obs_arr = self._format_rnn_obs(obs,left_actions)
+      #formatted_obs_arr = self._format_obs(obs,left_actions)
       ## LukeM: infer action from logistic regression models
-      luke_ai_actions = self._infer_from_supervised_lr_models(formatted_obs_arr)
+      #luke_ai_actions = self._infer_from_supervised_lr_models(formatted_obs_arr)
 
       ## LukeM: infer action from neural network
-      #luke_ai_actions = self._infer_from_neural_network_model(formatted_obs_arr)
-
+      luke_ai_actions = self._infer_from_neural_network_model(formatted_obs_arr)
 
 
       self._log_train_data(formatted_obs_arr)
